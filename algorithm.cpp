@@ -22,87 +22,65 @@ void matrix_mult_vector_msr(int n, double* A, int* I, double* x, double* y, int 
 }
 
 void apply_preconditioner_msr_matrix(int n, double* A, int* I, double* v1, double* v2, int flag, int p, int k) {
-    // Коэффициент релаксации для блочного метода
     const double omega = 1.0; 
     
-    // Выбор и применение треугольного решателя в зависимости от флага
     if (flag == 0) {
-        // Нижняя треугольная часть
         solve_rsystem(n, I, A, v2, v1, omega, p, k);
     } else {
-        // Верхняя треугольная часть
         solve_lsystem(n, I, A, v2, v1, omega, p, k);
     }
 
-    // Необходимая синхронизация
     reduce_sum<int>(p);
 }
 
 bool step(int n, double* A, int* I, double* x, double* r, double* u, double* v, double prec, int p, int k) {
-    // Вычисление матрично-векторного произведения 
     matrix_mult_vector_msr(n, A, I, v, u, p, k);
     
-    // Оценка норм для проверки сходимости
     const double residual_norm = scalar_product(n, r, r, p, k);
     const double direction_norm = scalar_product(n, u, u, p, k);
 
     if (residual_norm < prec || direction_norm < prec) {
         return true; // Достигнута сходимость
     }
-    // Вычисление оптимального шага для минимизации ошибки
     const double step_size = residual_norm / direction_norm;
     
-    // Обновление приближения решения
     mult_sub_vector(n, x, v, step_size, p, k);
     
-    // Обновление вектора невязки
     mult_sub_vector(n, r, u, step_size, p, k);
     
-    // Процесс продолжается
     return false;
 }
 
 int minimal_errors_msr_matrix(int n, double* A, int* I, double* b, double* x,
     double* r, double* u, double* v, double eps, int maxit, int p, int k) {
     
-    // Инициализация параметров метода
     double convergence_threshold;
     int iteration_count;
     
-    // Вычисление квадрата нормы правой части
     const double rhs_norm_squared = scalar_product(n, b, b, p, k);
     
-    // Установка порога сходимости
     convergence_threshold = rhs_norm_squared * eps * eps;
     
-    // Формирование начальной невязки r = Ax - b
     matrix_mult_vector_msr(n, A, I, x, r, p, k);
     mult_sub_vector(n, r, b, 1.0, p, k);
     
-    // Основной итерационный процесс
     for (iteration_count = 0; iteration_count < maxit; ++iteration_count) {
-        // Этап 1: Применение предобуславливателя к невязке (нижняя часть)
         apply_preconditioner_msr_matrix(n, A, I, v, r, 0, p, k);
         
-        // Проверка сходимости после первого полушага
         if (step(n, A, I, x, r, u, v, convergence_threshold, p, k)) {
             break;
         }
         
-        // Этап 2: Пересчет невязки для текущего приближения
         matrix_mult_vector_msr(n, A, I, x, u, p, k);
         mult_sub_vector(n, u, b, 1.0, p, k);
         
-        // Этап 3: Применение предобуславливателя к обновленной невязке (верхняя часть)
         apply_preconditioner_msr_matrix(n, A, I, v, u, 1, p, k);
         
-        // Проверка сходимости после второго полушага
         if (step(n, A, I, x, r, u, v, convergence_threshold, p, k)) {
             break;
         }
     }
     
-    // Возвращаем результат о сходимости
     if (iteration_count >= maxit) {
         return -1; // Не достигнута сходимость
     }
@@ -117,28 +95,21 @@ int minimal_errors_msr_matrix_full(int n, double* A, int* I, double* b, double* 
     int convergence_status;
     int total_iterations = 0;
     
-    // Последовательные попытки достичь сходимости
     for (current_attempt = 0; current_attempt < maxsteps; ++current_attempt) {
-        // Запуск одного цикла итерационного метода
         convergence_status = minimal_errors_msr_matrix(n, A, I, b, x, r, u, v, eps, maxit, p, k);
         
-        // Проверка успешности
         if (convergence_status >= 0) {
-            // Метод сошелся, добавляем число затраченных итераций
             total_iterations += convergence_status;
             break;
         }
         
-        // Метод не сошелся за отведенное число итераций
         total_iterations += maxit;
     }
     
-    // Проверка достижения максимального числа попыток
     if (current_attempt >= maxsteps) {
         return -1; // Сходимость не достигнута
     }
     
-    // Возвращаем общее число итераций до сходимости
     return total_iterations;
 }
 
@@ -184,7 +155,6 @@ int get_len_msr(int nx, int ny) {
 }
 
 int get_off_diag(int nx, int ny, int i, int j, int* I_ij) {
-    // Completely different approach using array of potential neighbors
     struct Neighbor { int di, dj; };
     const Neighbor neighbors[] = {
         {1, 0},   // right
@@ -200,7 +170,6 @@ int get_off_diag(int nx, int ny, int i, int j, int* I_ij) {
         int ni = i + neighbors[idx].di;
         int nj = j + neighbors[idx].dj;
         
-        // Check if neighbor is within bounds
         if (ni >= 0 && ni <= nx && nj >= 0 && nj <= ny) {
             if (I_ij != nullptr) {
                 int l;
@@ -215,13 +184,10 @@ int get_off_diag(int nx, int ny, int i, int j, int* I_ij) {
 }
 
 int get_len_msr_off_diag(int nx, int ny) {
-    // Alternative implementation using running sum
     int total_offdiag = 0;
     
-    // Process each grid point
     for (int row = 0; row <= ny; ++row) {
         for (int col = 0; col <= nx; ++col) {
-            // Add count of off-diagonal elements for this cell
             total_offdiag += get_off_diag(nx, ny, col, row, nullptr);
         }
     }
@@ -230,10 +196,8 @@ int get_len_msr_off_diag(int nx, int ny) {
 }
 
 int allocate_msr_matrix(int nx, int ny, double** p_A, int** p_I) {
-    // Calculate sizes differently
     const int grid_size = (nx+1)*(ny+1);
     
-    // Calculate off-diagonal elements
     int offdiag_elements = 0;
     for (int node = 0; node < grid_size; ++node) {
         int i, j;
@@ -241,10 +205,8 @@ int allocate_msr_matrix(int nx, int ny, double** p_A, int** p_I) {
         offdiag_elements += get_off_diag(nx, ny, i, j, nullptr);
     }
     
-    // Total size includes diagonal, offdiagonal and sentinel
     int total_size = grid_size + offdiag_elements + 1;
     
-    // Allocate memory with error checking
     try {
         *p_A = new double[total_size];
         *p_I = new int[total_size];
@@ -264,26 +226,19 @@ void fill_I(int nx, int ny, int* I) {
     const int height = ny + 1;
     const int total_nodes = width * height;
     
-    // Start with initial offset after diagonal
     int current_offset = total_nodes + 1;
     
-    // For each node in the grid
     for (int node_idx = 0; node_idx < total_nodes; ++node_idx) {
-        // Store start of offdiagonal entries for this row
         I[node_idx] = current_offset;
         
-        // Convert linear index to 2D coordinates
         int x, y;
         l2ij(nx, ny, x, y, node_idx);
         
-        // Store indices of offdiagonal entries
         int neighbor_count = get_off_diag(nx, ny, x, y, &I[current_offset]);
         
-        // Update offset for next row
         current_offset += neighbor_count;
     }
     
-    // Set sentinel at the end
     I[total_nodes] = current_offset;
 }
 
@@ -342,24 +297,18 @@ void fill_A_ij(int nx, int ny, double hx, double hy, int i, int j, double* A_dia
 }
 
 void fill_A(int nx, int ny, double hx, double hy, int* I, double* A, int p, int k) {
-    // Changed coding style with camelCase and different structure
     const int totalNodes = (nx + 1) * (ny + 1);
     
-    // Calculate thread's workload boundaries
     const int startIdx = (totalNodes * k) / p;
     const int endIdx = (totalNodes * (k + 1)) / p;
 
-    // Process each node assigned to this thread
     for (int nodeIndex = startIdx; nodeIndex < endIdx; ++nodeIndex) {
-        // Extract grid coordinates
         int gridX, gridY;
         l2ij(nx, ny, gridX, gridY, nodeIndex);
         
-        // Get pointers to matrix storage locations
         double* diagElement = &A[nodeIndex];
         double* offDiagElements = &A[I[nodeIndex]];
 
-        // Compute matrix elements for this node
         fill_A_ij(
             nx, ny,                 // Grid dimensions
             hx, hy,                 // Grid spacing
@@ -369,41 +318,30 @@ void fill_A(int nx, int ny, double hx, double hy, int* I, double* A, int p, int 
         );
     }
 
-    // Synchronize threads
     reduce_sum<int>(p);
 }
 
-// Check matrix symmetry to avoid potential errors in calculations
 int check_symm(int nx, int ny, int* I, double* A, double eps, int p, int k) {
-    // Define constants and variables with descriptive names
     const int GRID_SIZE = (nx+1)*(ny+1);
     const int THREAD_START = (k * GRID_SIZE) / p;
     const int THREAD_END = ((k + 1) * GRID_SIZE) / p;
     
-    // Count of symmetry violations detected by this thread
     int symmetryErrors = 0;
     
-    // For each row assigned to this thread
     for (int rowIdx = THREAD_START; rowIdx < THREAD_END; ++rowIdx) {
-        // Get information about non-zero elements in this row
         const int elementsInRow = I[rowIdx + 1] - I[rowIdx];
         const int rowOffset = I[rowIdx];
         
-        // Check each off-diagonal element in current row
         for (int elemPos = 0; elemPos < elementsInRow; ++elemPos) {
-            // Value and column of current matrix element
             const double currentValue = A[rowOffset + elemPos];
             const int colIdx = I[rowOffset + elemPos];
             
-            // Now search for matching element A(colIdx, rowIdx) in row colIdx
             const int matchingRowOffset = I[colIdx];
             const int matchingRowSize = I[colIdx + 1] - matchingRowOffset;
             
-            // Search for position of symmetric element
             int matchingPos = 0;
             bool foundMatch = false;
             
-            // Linear search through non-zero elements
             for (; matchingPos < matchingRowSize; ++matchingPos) {
                 if (I[matchingRowOffset + matchingPos] == rowIdx) {
                     foundMatch = true;
@@ -411,27 +349,21 @@ int check_symm(int nx, int ny, int* I, double* A, double eps, int p, int k) {
                 }
             }
             
-            // Check if symmetry is violated
             if (!foundMatch) {
-                // Missing symmetric element
                 symmetryErrors++;
             } else if (fabs(A[matchingRowOffset + matchingPos] - currentValue) > eps) {
-                // Symmetric element exists but values differ too much
                 symmetryErrors++;
             }
         }
     }
     
-    // Combine error counts from all threads
     reduce_sum<int>(p, &symmetryErrors, 1);
     return symmetryErrors;
 }
 
 double F_IJ(int nx, int ny, double hx, double hy, double a, double с, int i, int j, double (*f)(double, double)) {
-    // Quadrature constant - scaled element area
     const double quadWeight = hx * hy / 192.0;
     
-    // Define node types for gridpoint location classification
     enum NodeType {
         INTERIOR,       // Interior node
         EDGE_BOTTOM,    // Bottom edge (j=0), not corner
@@ -444,7 +376,6 @@ double F_IJ(int nx, int ny, double hx, double hy, double a, double с, int i, in
         CORNER_SE       // Bottom-right / southeast corner (nx,0)
     };
     
-    // Determine node type based on position
     NodeType nodeType;
     
     if (i > 0 && i < nx && j > 0 && j < ny) {
@@ -466,29 +397,23 @@ double F_IJ(int nx, int ny, double hx, double hy, double a, double с, int i, in
     } else if (i == nx && j == 0) {
         nodeType = CORNER_SE;
     } else {
-        // Should never happen
         return 1e308;
     }
     
-    // Calculate quadrature based on node type
     switch (nodeType) {
         case INTERIOR: {
-            // Center point
             double centerTerm = 36.0 * F(i, j);
             
-            // Edge midpoints (6 terms)
             double edgeMidpointTerms = 
                 20.0 * (F(i+0.5, j) + F(i, j-0.5) + 
                        F(i-0.5, j-0.5) + F(i-0.5, j) + 
                        F(i, j+0.5) + F(i+0.5, j+0.5));
             
-            // "Secondary" points (6 terms)
             double secondaryTerms = 
                 4.0 * (F(i+0.5, j-0.5) + F(i-0.5, j-1) + 
                       F(i-1, j-0.5) + F(i-0.5, j+0.5) + 
                       F(i+0.5, j+1) + F(i+1, j+0.5));
             
-            // Corner points (6 terms)
             double cornerTerms = 
                 2.0 * (F(i+1, j) + F(i, j-1) + 
                       F(i-1, j-1) + F(i-1, j) + 
@@ -607,61 +532,44 @@ void fill_B(int nx, int ny, double hx, double hy, double a, double c, double* B,
 }
 
 void solve_rsystem(int n, int* I, double* U, double* b, double* x, double w, int p, int k) {
-    // Обработка нижней треугольной части
-    // Начало и конец интервала для данного потока
     int start_idx, end_idx;
     thread_rows(n, p, k, start_idx, end_idx);
 
-    // Обратный порядок обхода для нижней треугольной матрицы
     for (int current = end_idx - 1; current >= start_idx; --current) {
-        // Количество ненулевых внедиагональных элементов
         const int num_elements = I[current + 1] - I[current];
         
-        // Вычисление суммы известных элементов
         double sum_known = 0.0;
         const int offset = I[current];
         
-        // Перебор всех ненулевых элементов
         for (int elem_idx = 0; elem_idx < num_elements; ++elem_idx) {
             const int col_idx = I[offset + elem_idx];
-            // Учитываем только элементы правее диагонали
             if (col_idx > current && col_idx >= start_idx && col_idx < end_idx) {
                 sum_known += x[col_idx] * U[offset + elem_idx];
             }
         }
         
-        // Вычисление значения для текущей переменной
         x[current] = w * (b[current] - sum_known) / U[current];
     }
 }
 
 void solve_lsystem(int n, int* I, double* U, double* b, double* x, double w, int p, int k) {
-    // Получение диапазона индексов для текущего потока
     int range_begin, range_end;
     thread_rows(n, p, k, range_begin, range_end);
     
-    // Прямой проход для верхнетреугольной системы (сверху вниз)
     for (int row = range_begin; row < range_end; ++row) {
-        // Сумма влияния уже вычисленных неизвестных
         double accumulated_effect = 0.0;
         
-        // Индекс начала внедиагональных элементов в текущей строке
         const int row_start = I[row];
-        // Количество внедиагональных элементов
         const int element_count = I[row + 1] - row_start;
         
-        // Для каждого ненулевого элемента в строке
         for (int pos = 0; pos < element_count; ++pos) {
-            // Индекс столбца текущего элемента
             const int col = I[row_start + pos];
             
-            // Учитываем только элементы слева от диагонали в пределах диапазона потока
             if (col < row && col >= range_begin && col < range_end) {
                 accumulated_effect += x[col] * U[row_start + pos];
             }
         }
         
-        // Обновление текущей неизвестной с учетом коэффициента релаксации
         x[row] = w * (b[row] - accumulated_effect) / U[row];
     }
 }
