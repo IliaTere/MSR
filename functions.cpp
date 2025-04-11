@@ -1,4 +1,4 @@
-#include "inc.h"
+#include "all_includes.h"
 
 double f_0(double, double) {
     return 1;
@@ -33,30 +33,28 @@ double f_7(double x, double y) {
 }
 
 void Functions::select_f(int func_id) {
-    switch (func_id) {
-        case 0:
-            f = f_0;
-            break;
-        case 1:
-            f = f_1;
-            break;
-        case 2:
-            f = f_2;
-            break;
-        case 3:
-            f = f_3;
-            break;
-        case 4:
-            f = f_4;
-            break;
-        case 5:
-            f = f_5;
-            break;
-        case 6:
-            f = f_6;
-            break;
-        case 7:
-            f = f_7;
-            break;
+    if (func_id == 0) {
+        f = f_0;
+    } else if (func_id == 1) {
+        f = f_1;
+    } else if (func_id == 2) {
+        f = f_2;
+    } else if (func_id == 3) {
+        f = f_3;
+    } else if (func_id == 4) {
+        f = f_4;
+    } else if (func_id == 5) {
+        f = f_5;
+    } else if (func_id == 6) {
+        f = f_6;
+    } else if (func_id == 7) {
+        f = f_7;
     }
+}
+
+void displayVector(int vectorSize, double* dataArray) {
+    for (int idx = 0; idx < vectorSize; ++idx) {
+        printf("%.6lf ", dataArray[idx]);
+    }
+    printf("\n");
 }

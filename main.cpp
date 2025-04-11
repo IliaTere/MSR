@@ -1,140 +1,115 @@
 #include <string>
 #include <cstring>
-#include "inc.h"
+#include "all_includes.h"
 #include <fenv.h>
 #include <iostream>
 #include <stdexcept>
 
-// Display vector values for debugging
-void displayVector(int vectorSize, double* dataArray) {
-    for (int idx = 0; idx < vectorSize; ++idx) {
-        printf("%.6lf ", dataArray[idx]);
-    }
-    printf("\n");
-}
 
 int main(int argc, char* argv[]) {
-    // Enable floating-point exceptions
     feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW);
     
     
-    // Check for correct number of arguments
     if (argc != 11) {
         std::cerr << "Error: Expected 10 command-line arguments." << std::endl;
         std::cerr << "Usage: " << argv[0] << " a b c d nx ny k epsilon max_iterations threads" << std::endl;
         return 1;
     }
+
+    double a = std::stod(argv[1]);
+    double b = std::stod(argv[2]);
+    double c = std::stod(argv[3]);
+    double d = std::stod(argv[4]);
+    int nx = std::stoi(argv[5]);
+    int ny = std::stoi(argv[6]);
+    int k = std::stoi(argv[7]);
+    double eps = std::stod(argv[8]);
+    int max_its = std::stoi(argv[9]);
+    int p = std::stoi(argv[10]);
     
-    // Parse command line arguments directly
-    double domainStartX = std::stod(argv[1]);
-    double domainEndX = std::stod(argv[2]);
-    double domainStartY = std::stod(argv[3]);
-    double domainEndY = std::stod(argv[4]);
-    int gridPointsX = std::stoi(argv[5]);
-    int gridPointsY = std::stoi(argv[6]);
-    int functionIdentifier = std::stoi(argv[7]);
-    double solverTolerance = std::stod(argv[8]);
-    int maxSolverIterations = std::stoi(argv[9]);
-    int numThreads = std::stoi(argv[10]);
-    
-    // Allocate and initialize MSR matrix structure
-    int* rowIndices = nullptr;
-    double* matrixValues = nullptr;
-    if (allocate_msr_matrix(gridPointsX, gridPointsY, &matrixValues, &rowIndices)) { 
+    int* I = nullptr;
+    double* A = nullptr;
+    if (allocate_msr_matrix(nx, ny, &A, &I)) { 
         std::cerr << "Error: Failed to allocate MSR matrix." << std::endl;
         return 2; 
     }
     
-    // Initialize reduction operations for parallel execution
-    init_reduce_sum(numThreads);
+    init_reduce_sum(p);
     
-    // Calculate total grid size
-    int totalGridPoints = (gridPointsX + 1) * (gridPointsY + 1);
+    int n = (nx + 1) * (ny + 1);
     
-    // Allocate arrays for the solution process
-    double* rightHandSide = new double[totalGridPoints];
-    double* solutionVector = new double[totalGridPoints];
-    double* residual = new double[totalGridPoints];
-    double* auxVector1 = new double[totalGridPoints];
-    double* auxVector2 = new double[totalGridPoints];
+    double* B = new double[n];
+    double* x = new double[n];
+    double* r = new double[n];
+    double* u = new double[n];
+    double* v = new double[n];
 
-    // Initialize matrix structure
-    fill_I(gridPointsX, gridPointsY, rowIndices);
+    fill_I(nx, ny, I);
 
-    // Initialize solution vector to zeros
-    memset(solutionVector, 0, totalGridPoints * sizeof(double));
+    memset(x, 0, n * sizeof(double));
 
-    // Set up function to approximate
-    Functions functionProvider;
-    functionProvider.select_f(functionIdentifier);
-    double (*targetFunction)(double, double) = functionProvider.f;
+    Functions func;
+    func.select_f(k);
+    double (*f)(double, double) = func.f;
 
-    // Initialize thread arguments and thread IDs
-    Args* threadArgs = new Args[numThreads];
-    pthread_t* threadIds = new pthread_t[numThreads];
+    Args* args = new Args[p];
+    pthread_t* threads = new pthread_t[p];
         
-    // Create worker threads (skipping the first one for main thread)
-    for (int threadIdx = 1; threadIdx < numThreads; ++threadIdx) {
-        // Fill thread arguments
-        threadArgs[threadIdx].a = domainStartX;
-        threadArgs[threadIdx].b = domainEndX;
-        threadArgs[threadIdx].c = domainStartY;
-        threadArgs[threadIdx].d = domainEndY;
-        threadArgs[threadIdx].eps = solverTolerance;
-        threadArgs[threadIdx].I = rowIndices;
-        threadArgs[threadIdx].A = matrixValues;
-        threadArgs[threadIdx].B = rightHandSide;
-        threadArgs[threadIdx].x = solutionVector;
-        threadArgs[threadIdx].r = residual;
-        threadArgs[threadIdx].u = auxVector1;
-        threadArgs[threadIdx].v = auxVector2;
-        threadArgs[threadIdx].nx = gridPointsX;
-        threadArgs[threadIdx].ny = gridPointsY;
-        threadArgs[threadIdx].maxit = maxSolverIterations;
-        threadArgs[threadIdx].p = numThreads;
-        threadArgs[threadIdx].k = threadIdx;
-        threadArgs[threadIdx].f = targetFunction;
+    for (int i = 1; i < p; ++i) {
+        args[i].a = a;
+        args[i].b = b;
+        args[i].c = c;
+        args[i].d = d;
+        args[i].eps = eps;
+        args[i].I = I;
+        args[i].A = A;
+        args[i].B = B;
+        args[i].x = x;
+        args[i].r = r;
+        args[i].u = u;
+        args[i].v = v;
+        args[i].nx = nx;
+        args[i].ny = ny;
+        args[i].maxit = max_its;
+        args[i].p = p;
+        args[i].k = i;
+        args[i].f = f;
 
-        // Create the thread - using the solution function from inc.h
-        pthread_create(&threadIds[threadIdx], nullptr, &::solution, &threadArgs[threadIdx]); 
+        pthread_create(&threads[i], nullptr, &::solution, &args[i]); 
     }
 
-    // Configure main thread arguments
-    threadArgs[0].a = domainStartX;
-    threadArgs[0].b = domainEndX;
-    threadArgs[0].c = domainStartY;
-    threadArgs[0].d = domainEndY;
-    threadArgs[0].eps = solverTolerance;
-    threadArgs[0].I = rowIndices;
-    threadArgs[0].A = matrixValues;
-    threadArgs[0].B = rightHandSide;
-    threadArgs[0].x = solutionVector;
-    threadArgs[0].r = residual;
-    threadArgs[0].u = auxVector1;
-    threadArgs[0].v = auxVector2;
-    threadArgs[0].nx = gridPointsX;
-    threadArgs[0].ny = gridPointsY;
-    threadArgs[0].maxit = maxSolverIterations;
-    threadArgs[0].p = numThreads;
-    threadArgs[0].k = 0;
-    threadArgs[0].f = targetFunction;
+    args[0].a = a;
+    args[0].b = b;
+    args[0].c = c;
+    args[0].d = d;
+    args[0].eps = eps;
+    args[0].I = I;
+    args[0].A = A;
+    args[0].B = B;
+    args[0].x = x;
+    args[0].r = r;
+    args[0].u = u;
+    args[0].v = v;
+    args[0].nx = nx;
+    args[0].ny = ny;
+    args[0].maxit = max_its;
+    args[0].p = p;
+    args[0].k = 0;
+    args[0].f = f;
     
-    // Execute computation in the main thread
-    ::solution(&threadArgs[0]);
+    ::solution(&args[0]);
 
-    // Wait for all worker threads to complete
-    for (int threadIdx = 1; threadIdx < numThreads; ++threadIdx) {
-        pthread_join(threadIds[threadIdx], nullptr);
+    for (int i = 1; i < p; ++i) {
+        pthread_join(threads[i], nullptr);
     }    
 
-    // Extract results from the main thread's arguments
-    int iterationCount = threadArgs[0].its;
-    double residualNorm1 = threadArgs[0].res_1;
-    double residualNorm2 = threadArgs[0].res_2;
-    double residualNorm3 = threadArgs[0].res_3;
-    double residualNorm4 = threadArgs[0].res_4;
-    double setupTime = threadArgs[0].t1;
-    double solveTime = threadArgs[0].t2;
+    int its = args[0].its;
+    double r1 = args[0].res_1;
+    double r2 = args[0].res_2;
+    double r3 = args[0].res_3;
+    double r4 = args[0].res_4;
+    double t1 = args[0].t1;
+    double t2 = args[0].t2;
 
     const int task = 6;
 
@@ -142,26 +117,22 @@ int main(int argc, char* argv[]) {
         "%s : Task = %d R1 = %e R2 = %e R3 = %e R4 = %e T1 = %.2f T2 = %.2f\n"
         "      It = %d E = %e K = %d Nx = %d Ny = %d P = %d\n",
         argv[0], task, 
-        residualNorm1, residualNorm2, residualNorm3, residualNorm4, 
-        setupTime, solveTime, 
-        iterationCount, solverTolerance, functionIdentifier, 
-        gridPointsX, gridPointsY, numThreads);
+        r1, r2, r3, r4, 
+        t1, t2, 
+        its, eps, k, 
+        nx, ny, p);
 
-    // Uncomment for debugging
-    // displayVector(totalGridPoints, solutionVector);
-    // displayVector(totalGridPoints, rightHandSide);    
 
-    // Clean up resources
     free_results();
-    delete[] rowIndices;
-    delete[] matrixValues;
-    delete[] rightHandSide;
-    delete[] solutionVector;
-    delete[] residual;
-    delete[] auxVector1;
-    delete[] auxVector2;
-    delete[] threadArgs;
-    delete[] threadIds;
+    delete[] I;
+    delete[] A;
+    delete[] B;
+    delete[] x;
+    delete[] r;
+    delete[] u;
+    delete[] v;
+    delete[] args;
+    delete[] threads;
 
     return 0;
 }

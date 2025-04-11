@@ -1,5 +1,5 @@
 #include <sys/sysinfo.h>
-#include "inc.h"
+#include "all_includes.h"
 
 void* solution(void* ptr) {
     Args* args = (Args*)ptr;

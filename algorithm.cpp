@@ -1,4 +1,4 @@
-#include "inc.h"
+#include "all_includes.h"
 #include <sys/resource.h>
 
 #define FUNC(I, J) do { ij2l(nx, ny, I, J, k); if (I_ij) { I_ij[m] = k; } m++; } \
@@ -183,57 +183,108 @@ int get_len_msr(int nx, int ny) {
             + 2*3 + 2*2; 
 }
 
-#define FUNC(I, J) do { ij2l(nx, ny, I, J, k); if (I_ij) { I_ij[m] = k; } m++; } \
-                  while (0)
-
-// странно считает 0 1 0 1 2 2 1 1e-10 1000 1
 int get_off_diag(int nx, int ny, int i, int j, int* I_ij) {
-    int m = 0; int k;
-    if (i < nx) { FUNC(i+1, j); }
-    if (j > 0) { FUNC(i, j-1); }
-    if (i > 0 && j > 0) { FUNC(i-1, j-1); }
-    if (i > 0) { FUNC(i - 1, j); }
-    if (j < ny) { FUNC(i, j+1); }
-    if (i < nx && j < ny) { FUNC(i+1, j+1); }
-
-    return m;
+    // Completely different approach using array of potential neighbors
+    struct Neighbor { int di, dj; };
+    const Neighbor neighbors[] = {
+        {1, 0},   // right
+        {0, -1},  // down
+        {-1, -1}, // down-left
+        {-1, 0},  // left
+        {0, 1},   // up
+        {1, 1}    // up-right
+    };
+    
+    int count = 0;
+    for (int idx = 0; idx < 6; ++idx) {
+        int ni = i + neighbors[idx].di;
+        int nj = j + neighbors[idx].dj;
+        
+        // Check if neighbor is within bounds
+        if (ni >= 0 && ni <= nx && nj >= 0 && nj <= ny) {
+            if (I_ij != nullptr) {
+                int l;
+                ij2l(nx, ny, ni, nj, l);
+                I_ij[count] = l;
+            }
+            count++;
+        }
+    }
+    
+    return count;
 }
 
 int get_len_msr_off_diag(int nx, int ny) {
-    int m = 0; int i, j;
-    for (i = 0; i <= nx; ++i) {
-        for (j = 0; j <= ny; ++j) {
-            m += get_off_diag(nx, ny, i, j);
+    // Alternative implementation using running sum
+    int total_offdiag = 0;
+    
+    // Process each grid point
+    for (int row = 0; row <= ny; ++row) {
+        for (int col = 0; col <= nx; ++col) {
+            // Add count of off-diagonal elements for this cell
+            total_offdiag += get_off_diag(nx, ny, col, row, nullptr);
         }
-    }    
-
-    return m;
+    }
+    
+    return total_offdiag;
 }
 
 int allocate_msr_matrix(int nx, int ny, double** p_A, int** p_I) {
-    int diag_len = (nx+1)*(ny+1);
-    int off_diag = get_len_msr_off_diag(nx, ny);
-    int len = diag_len + off_diag + 1;
-
-    double* A = nullptr; int* I = nullptr;
-    A = new double[len]; if (A == nullptr) { return 1; }
-    I = new int[len]; if (I == nullptr) { return 2; }
-    *p_A = A; *p_I = I;
-    return 0;  
+    // Calculate sizes differently
+    const int grid_size = (nx+1)*(ny+1);
+    
+    // Calculate off-diagonal elements
+    int offdiag_elements = 0;
+    for (int node = 0; node < grid_size; ++node) {
+        int i, j;
+        l2ij(nx, ny, i, j, node);
+        offdiag_elements += get_off_diag(nx, ny, i, j, nullptr);
+    }
+    
+    // Total size includes diagonal, offdiagonal and sentinel
+    int total_size = grid_size + offdiag_elements + 1;
+    
+    // Allocate memory with error checking
+    try {
+        *p_A = new double[total_size];
+        *p_I = new int[total_size];
+    } catch (std::bad_alloc&) {
+        if (*p_A != nullptr) {
+            delete[] *p_A;
+            *p_A = nullptr;
+        }
+        return 1; // allocation failed
+    }
+    
+    return 0; // success
 }
 
-void fill_I(int nx, int ny, int* I) { 
-    int N = (nx+1) * (ny+1);
-    int l; int i, j;
-    int m; int r = N + 1;
-    for (l = 0; l < N; ++l) {
-        l2ij(nx, ny, i, j, l);
-        I[l] = r;
-        m = get_off_diag(nx, ny, i, j, I + r);
-        r += m;
+void fill_I(int nx, int ny, int* I) {
+    const int width = nx + 1;
+    const int height = ny + 1;
+    const int total_nodes = width * height;
+    
+    // Start with initial offset after diagonal
+    int current_offset = total_nodes + 1;
+    
+    // For each node in the grid
+    for (int node_idx = 0; node_idx < total_nodes; ++node_idx) {
+        // Store start of offdiagonal entries for this row
+        I[node_idx] = current_offset;
+        
+        // Convert linear index to 2D coordinates
+        int x, y;
+        l2ij(nx, ny, x, y, node_idx);
+        
+        // Store indices of offdiagonal entries
+        int neighbor_count = get_off_diag(nx, ny, x, y, &I[current_offset]);
+        
+        // Update offset for next row
+        current_offset += neighbor_count;
     }
-
-    I[l] = r;
+    
+    // Set sentinel at the end
+    I[total_nodes] = current_offset;
 }
 
 void fill_A_ij(int nx, int ny, double hx, double hy, int i, int j, double* A_diag, double* A_off_diag) {
@@ -288,126 +339,255 @@ void fill_A_ij(int nx, int ny, double hx, double hy, int i, int j, double* A_dia
         A_off_diag[1] = 1*s/24;
     }
 
-    // abort() если сюда дошли
 }
 
 void fill_A(int nx, int ny, double hx, double hy, int* I, double* A, int p, int k) {
-    int l1, l2;
-    int i, j;
-    int N = (nx + 1) * (ny + 1);    
-    l1 = N * k; l1 /= p;
-    l2 = N * (k + 1); l2 /= p;
+    // Changed coding style with camelCase and different structure
+    const int totalNodes = (nx + 1) * (ny + 1);
+    
+    // Calculate thread's workload boundaries
+    const int startIdx = (totalNodes * k) / p;
+    const int endIdx = (totalNodes * (k + 1)) / p;
 
-    for (int l = l1; l < l2; ++l) {
-        l2ij(nx, ny, i, j, l);
-        double* A_diag = A + l;
-        double* A_off_diag = A + I[l];
+    // Process each node assigned to this thread
+    for (int nodeIndex = startIdx; nodeIndex < endIdx; ++nodeIndex) {
+        // Extract grid coordinates
+        int gridX, gridY;
+        l2ij(nx, ny, gridX, gridY, nodeIndex);
+        
+        // Get pointers to matrix storage locations
+        double* diagElement = &A[nodeIndex];
+        double* offDiagElements = &A[I[nodeIndex]];
 
-        fill_A_ij(nx, ny, hx, hy, i, j, A_diag, A_off_diag);
+        // Compute matrix elements for this node
+        fill_A_ij(
+            nx, ny,                 // Grid dimensions
+            hx, hy,                 // Grid spacing
+            gridX, gridY,           // Node coordinates
+            diagElement,            // Diagonal element location
+            offDiagElements         // Off-diagonal elements location
+        );
     }
 
+    // Synchronize threads
     reduce_sum<int>(p);
 }
 
-// обязательно проверить матрицу построенную на симметричность иначе потом долго ошибку искать
+// Check matrix symmetry to avoid potential errors in calculations
 int check_symm(int nx, int ny, int* I, double* A, double eps, int p, int k) {
-    int l1, l2, l;
-    int N = (nx+1)*(ny+1);
-    l1 = k * N; l1 /= p;
-    l2 = (k + 1) * N; l2 /= p;
-
-    int err = 0;
-
-    for (l = l1; l < l2; ++l) {
-        int m = I[l + 1] - I[l];
-        double* A_off_diag = A + I[l];
-        for (int q = 0; q < m; ++q) {
-            double a_ij = A_off_diag[q];
-            int j = I[I[l] + q];
-            // найти в j-ой строке внедиагональный элемент с номером l
-            int m2 = I[j + 1] - I[j];
-            int q2;
-            for (q2 = 0; q2 < m2; ++q2) {
-                if (I[I[j] + q2] == l) {
+    // Define constants and variables with descriptive names
+    const int GRID_SIZE = (nx+1)*(ny+1);
+    const int THREAD_START = (k * GRID_SIZE) / p;
+    const int THREAD_END = ((k + 1) * GRID_SIZE) / p;
+    
+    // Count of symmetry violations detected by this thread
+    int symmetryErrors = 0;
+    
+    // For each row assigned to this thread
+    for (int rowIdx = THREAD_START; rowIdx < THREAD_END; ++rowIdx) {
+        // Get information about non-zero elements in this row
+        const int elementsInRow = I[rowIdx + 1] - I[rowIdx];
+        const int rowOffset = I[rowIdx];
+        
+        // Check each off-diagonal element in current row
+        for (int elemPos = 0; elemPos < elementsInRow; ++elemPos) {
+            // Value and column of current matrix element
+            const double currentValue = A[rowOffset + elemPos];
+            const int colIdx = I[rowOffset + elemPos];
+            
+            // Now search for matching element A(colIdx, rowIdx) in row colIdx
+            const int matchingRowOffset = I[colIdx];
+            const int matchingRowSize = I[colIdx + 1] - matchingRowOffset;
+            
+            // Search for position of symmetric element
+            int matchingPos = 0;
+            bool foundMatch = false;
+            
+            // Linear search through non-zero elements
+            for (; matchingPos < matchingRowSize; ++matchingPos) {
+                if (I[matchingRowOffset + matchingPos] == rowIdx) {
+                    foundMatch = true;
                     break;
                 }
             }
-
-            if (q2 >= m2) {
-                err++;
-            } else if (fabs(A[I[j] + q2] - a_ij) > eps) {
-                err++;
-            } 
+            
+            // Check if symmetry is violated
+            if (!foundMatch) {
+                // Missing symmetric element
+                symmetryErrors++;
+            } else if (fabs(A[matchingRowOffset + matchingPos] - currentValue) > eps) {
+                // Symmetric element exists but values differ too much
+                symmetryErrors++;
+            }
         }
     }
-
-    reduce_sum<int>(p, &err, 1);
-    return err;
+    
+    // Combine error counts from all threads
+    reduce_sum<int>(p, &symmetryErrors, 1);
+    return symmetryErrors;
 }
 
 double F_IJ(int nx, int ny, double hx, double hy, double a, double с, int i, int j, double (*f)(double, double)) {
-    double w = hx*hy/192;
+    // Quadrature constant - scaled element area
+    const double quadWeight = hx * hy / 192.0;
+    
+    // Define node types for gridpoint location classification
+    enum NodeType {
+        INTERIOR,       // Interior node
+        EDGE_BOTTOM,    // Bottom edge (j=0), not corner
+        EDGE_TOP,       // Top edge (j=ny), not corner
+        EDGE_LEFT,      // Left edge (i=0), not corner
+        EDGE_RIGHT,     // Right edge (i=nx), not corner
+        CORNER_SW,      // Bottom-left / southwest corner (0,0)
+        CORNER_NE,      // Top-right / northeast corner (nx,ny)
+        CORNER_NW,      // Top-left / northwest corner (0,ny)
+        CORNER_SE       // Bottom-right / southeast corner (nx,0)
+    };
+    
+    // Determine node type based on position
+    NodeType nodeType;
+    
     if (i > 0 && i < nx && j > 0 && j < ny) {
-        return w * (36*F(i, j) + 20*(F(i+0.5, j) + F(i, j-0.5) + F(i-0.5,j-0.5) + F(i-0.5, j) + F(i, j+0.5) + F(i+0.5,j+0.5))
-            + 4*(F(i+0.5, j-0.5) + F(i-0.5, j-1) + F(i-1,j-0.5) + F(i-0.5,j+0.5) + F(i+0.5,j+1) + F(i+1,j+0.5))
-            + 2*(F(i+1,j) + F(i, j-1) + F(i-1,j-1) + F(i-1,j) + F(i,j+1) + F(i+1,j+1))
-        );
+        nodeType = INTERIOR;
+    } else if (i > 0 && i < nx && j == 0) {
+        nodeType = EDGE_BOTTOM;
+    } else if (i > 0 && i < nx && j == ny) {
+        nodeType = EDGE_TOP;
+    } else if (i == 0 && j > 0 && j < ny) {
+        nodeType = EDGE_LEFT;
+    } else if (i == nx && j > 0 && j < ny) {
+        nodeType = EDGE_RIGHT;
+    } else if (i == 0 && j == 0) {
+        nodeType = CORNER_SW;
+    } else if (i == nx && j == ny) {
+        nodeType = CORNER_NE;
+    } else if (i == 0 && j == ny) {
+        nodeType = CORNER_NW;
+    } else if (i == nx && j == 0) {
+        nodeType = CORNER_SE;
+    } else {
+        // Should never happen
+        return 1e308;
     }
     
-    if (i > 0 && i < nx && j == 0) {
-        return w * ( 
-            18*F(i,j) + 10*(F(i+0.5,j) + F(i-0.5,j)) + 20*(F(i,j+0.5) + F(i+0.5,j+0.5))
-            + 4*(F(i-0.5,j+0.5) + F(i+0.5,j+1) + F(i+1,j+0.5)) + 1*(F(i-1,j) + F(i+1,j)) + 2*(F(i,j+1) + F(i+1,j+1))
-        );
+    // Calculate quadrature based on node type
+    switch (nodeType) {
+        case INTERIOR: {
+            // Center point
+            double centerTerm = 36.0 * F(i, j);
+            
+            // Edge midpoints (6 terms)
+            double edgeMidpointTerms = 
+                20.0 * (F(i+0.5, j) + F(i, j-0.5) + 
+                       F(i-0.5, j-0.5) + F(i-0.5, j) + 
+                       F(i, j+0.5) + F(i+0.5, j+0.5));
+            
+            // "Secondary" points (6 terms)
+            double secondaryTerms = 
+                4.0 * (F(i+0.5, j-0.5) + F(i-0.5, j-1) + 
+                      F(i-1, j-0.5) + F(i-0.5, j+0.5) + 
+                      F(i+0.5, j+1) + F(i+1, j+0.5));
+            
+            // Corner points (6 terms)
+            double cornerTerms = 
+                2.0 * (F(i+1, j) + F(i, j-1) + 
+                      F(i-1, j-1) + F(i-1, j) + 
+                      F(i, j+1) + F(i+1, j+1));
+                
+            return quadWeight * (centerTerm + edgeMidpointTerms + secondaryTerms + cornerTerms);
+        }
+            
+        case EDGE_BOTTOM: {
+            double centerTerm = 18.0 * F(i, j);
+            double horizontalMidpoints = 10.0 * (F(i+0.5, j) + F(i-0.5, j));
+            double upwardMidpoints = 20.0 * (F(i, j+0.5) + F(i+0.5, j+0.5));
+            double diagonalPoints = 4.0 * (F(i-0.5, j+0.5) + F(i+0.5, j+1) + F(i+1, j+0.5));
+            double sidePoints = 1.0 * (F(i-1, j) + F(i+1, j));
+            double topPoints = 2.0 * (F(i, j+1) + F(i+1, j+1));
+            
+            return quadWeight * (centerTerm + horizontalMidpoints + upwardMidpoints + 
+                                diagonalPoints + sidePoints + topPoints);
+        }
+            
+        case EDGE_TOP: {
+            double centerTerm = 18.0 * F(i, j);
+            double horizontalMidpoints = 10.0 * (F(i+0.5, j) + F(i-0.5, j));
+            double downwardMidpoints = 20.0 * (F(i, j-0.5) + F(i-0.5, j-0.5));
+            double diagonalPoints = 4.0 * (F(i+0.5, j-0.5) + F(i-0.5, j-1) + F(i-1, j-0.5));
+            double sidePoints = 1.0 * (F(i-1, j) + F(i+1, j));
+            double bottomPoints = 2.0 * (F(i, j-1) + F(i-1, j-1));
+            
+            return quadWeight * (centerTerm + horizontalMidpoints + downwardMidpoints + 
+                                diagonalPoints + sidePoints + bottomPoints);
+        }
+            
+        case EDGE_LEFT: {
+            double centerTerm = 18.0 * F(i, j);
+            double verticalMidpoints = 10.0 * (F(i, j-0.5) + F(i, j+0.5));
+            double rightMidpoints = 20.0 * (F(i+0.5, j) + F(i+0.5, j+0.5));
+            double diagonalPoints = 4.0 * (F(i+0.5, j-0.5) + F(i+0.5, j+1) + F(i+1, j+0.5));
+            double topBottomPoints = 1.0 * (F(i, j-1) + F(i, j+1));
+            double rightPoints = 2.0 * (F(i+1, j) + F(i+1, j+1));
+            
+            return quadWeight * (centerTerm + verticalMidpoints + rightMidpoints + 
+                                diagonalPoints + topBottomPoints + rightPoints);
+        }
+            
+        case EDGE_RIGHT: {
+            double centerTerm = 18.0 * F(i, j);
+            double verticalMidpoints = 10.0 * (F(i, j-0.5) + F(i, j+0.5));
+            double leftMidpoints = 20.0 * (F(i-0.5, j) + F(i-0.5, j-0.5));
+            double diagonalPoints = 4.0 * (F(i-0.5, j-1) + F(i-1, j-0.5) + F(i-0.5, j+0.5));
+            double topBottomPoints = 1.0 * (F(i, j-1) + F(i, j+1));
+            double leftPoints = 2.0 * (F(i-1, j) + F(i-1, j-1));
+            
+            return quadWeight * (centerTerm + verticalMidpoints + leftMidpoints + 
+                                diagonalPoints + topBottomPoints + leftPoints);
+        }
+            
+        case CORNER_SW: {
+            double centerTerm = 12.0 * F(i, j);
+            double adjacentMidpoints = 10.0 * (F(i+0.5, j) + F(i, j+0.5));
+            double diagonalMidpoint = 20.0 * F(i+0.5, j+0.5);
+            double secondaryPoints = 4.0 * (F(i+1, j+0.5) + F(i+0.5, j+1));
+            double adjacentPoints = 1.0 * (F(i+1, j) + F(i, j+1));
+            double diagonalPoint = 2.0 * F(i+1, j+1);
+            
+            return quadWeight * (centerTerm + adjacentMidpoints + diagonalMidpoint + 
+                                secondaryPoints + adjacentPoints + diagonalPoint);
+        }
+            
+        case CORNER_NE: {
+            double centerTerm = 12.0 * F(i, j);
+            double adjacentMidpoints = 10.0 * (F(i-0.5, j) + F(i, j-0.5));
+            double diagonalMidpoint = 20.0 * F(i-0.5, j-0.5);
+            double secondaryPoints = 4.0 * (F(i-0.5, j-1) + F(i-1, j-0.5));
+            double adjacentPoints = 1.0 * (F(i, j-1) + F(i-1, j));
+            double diagonalPoint = 2.0 * F(i-1, j-1);
+            
+            return quadWeight * (centerTerm + adjacentMidpoints + diagonalMidpoint + 
+                                secondaryPoints + adjacentPoints + diagonalPoint);
+        }
+            
+        case CORNER_NW: {
+            double centerTerm = 6.0 * F(i, j);
+            double adjacentMidpoints = 10.0 * (F(i+0.5, j) + F(i, j-0.5));
+            double diagonalPoint = 4.0 * F(i+0.5, j-0.5);
+            double adjacentPoints = 1.0 * (F(i+1, j) + F(i, j-1));
+            
+            return quadWeight * (centerTerm + adjacentMidpoints + diagonalPoint + adjacentPoints);
+        }
+            
+        case CORNER_SE: {
+            double centerTerm = 6.0 * F(i, j);
+            double adjacentMidpoints = 10.0 * (F(i-0.5, j) + F(i, j+0.5));
+            double diagonalPoint = 4.0 * F(i-0.5, j+0.5);
+            double adjacentPoints = 1.0 * (F(i-1, j) + F(i, j+1));
+            
+            return quadWeight * (centerTerm + adjacentMidpoints + diagonalPoint + adjacentPoints);
+        }
     }
-
-    if (i > 0 && i < nx && j == ny) {
-        return w * (
-            18*F(i, j) + 10*(F(i+0.5,j) + F(i-0.5,j)) + 20*(F(i,j-0.5) + F(i-0.5,j-0.5))
-            + 4*(F(i+0.5,j-0.5) + F(i-0.5,j-1) + F(i-1,j-0.5)) + 1*(F(i-1,j) + F(i+1,j)) + 2*(F(i,j-1) + F(i-1,j-1))
-        );
-    }
-
-    if (i == 0 && j > 0 && j < ny) {
-        return w*(
-            18*F(i,j) + 10*(F(i,j-0.5) + F(i,j+0.5)) + 20*(F(i+0.5,j) + F(i+0.5,j+0.5))
-            + 4*(F(i+0.5,j-0.5) + F(i+0.5,j+1) + F(i+1,j+0.5)) + 1*(F(i,j-1) + F(i,j+1)) + 2*(F(i+1,j) + F(i+1,j+1))
-        );     
-    }
-
-    if (i == nx && j > 0 && j < ny) {
-        return w * (
-            18*F(i, j) + 10*(F(i,j-0.5) + F(i,j+0.5)) + 20*(F(i-0.5,j) + F(i-0.5,j-0.5))
-            + 4*(F(i-0.5,j-1) + F(i-1,j-0.5) + F(i-0.5,j+0.5)) + 1*(F(i,j-1) + F(i,j+1)) + 2*(F(i-1,j) + F(i-1,j-1))
-        );
-    }
-
-    if (i == 0 && j == 0) {
-        return w*(
-            12*F(i,j) + 10*(F(i+0.5,j) + F(i,j+0.5)) + 20*F(i+0.5,j+0.5)
-            + 4*(F(i+1,j+0.5) + F(i+0.5,j+1)) + 1*(F(i+1,j) + F(i,j+1)) + 2*F(i+1,j+1)
-        );     
-    }    
-
-    if (i == nx && j == ny) {
-        return w*(
-            12*F(i,j) + 10*(F(i-0.5,j) + F(i,j-0.5)) + 20*F(i-0.5,j-0.5)
-            + 4*(F(i-0.5,j-1) + F(i-1,j-0.5)) + 1*(F(i,j-1) + F(i-1,j)) + 2*F(i-1,j-1)
-        );   
-    }
-
-    if (i == 0 && j == ny) {
-        return w*(
-            6*F(i, j) + 10*(F(i+0.5,j) + F(i,j-0.5)) + 4*F(i+0.5,j-0.5) + F(i+1,j) + F(i,j-1) 
-        );
-    }
-
-    if (i == nx && j == 0) {
-        return w*(
-            6*F(i, j) + 10*(F(i-0.5,j) + F(i,j+0.5)) + 4*F(i-0.5,j+0.5) + F(i-1,j) + F(i,j+1) 
-        );      
-    }
-
+    
     return 1e308;
 }
 
