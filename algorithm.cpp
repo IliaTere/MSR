@@ -256,44 +256,52 @@ void fill_A_ij(int nx, int ny, double hx, double hy, int i, int j, double* A_dia
         A_off_diag[1] = 1*s/24;
         A_off_diag[2] = 2*s/24;
         A_off_diag[3] = 2*s/24;
+        return;
     } else if (j == ny && i > 0 && i < nx) {
         *A_diag = 3*s/12;
         A_off_diag[0] = 1*s/24;
         A_off_diag[1] = 2*s/24;
         A_off_diag[2] = 2*s/24;
         A_off_diag[3] = 1*s/24;
+        return;
     } else if (i == 0 && j > 0 && j < ny) {
         *A_diag = 3*s/12;
         A_off_diag[0] = 2*s/24;
         A_off_diag[1] = 1*s/24;
         A_off_diag[2] = 1*s/24;
         A_off_diag[3] = 2*s/24;
+        return;
     } else if (i == nx && j > 0 && j < ny) {
         *A_diag = 3*s/12;
         A_off_diag[0] = 1*s/24;
         A_off_diag[1] = 2*s/24;
         A_off_diag[2] = 2*s/24;
         A_off_diag[3] = 1*s/24;
+        return;
     } else if (i == 0 && j == 0) {
         *A_diag = 2*s/12;
         A_off_diag[0] = 1*s/24;
         A_off_diag[1] = 1*s/24;
         A_off_diag[2] = 2*s/24;
+        return;
     } else if (i == nx && j == ny) {
         *A_diag = 2*s/12;
         A_off_diag[0] = 1*s/24;
         A_off_diag[1] = 2*s/24;
         A_off_diag[2] = 1*s/24;
+        return;
     } else if (i == 0 && j == ny) {
         *A_diag = 1*s/12;
         A_off_diag[0] = 1*s/24;
         A_off_diag[1] = 1*s/24;
+        return;
     } else if (i == nx && j == 0) {
         *A_diag = 1*s/12;
         A_off_diag[0] = 1*s/24;
         A_off_diag[1] = 1*s/24;
+        return;
     }
-
+    // abort();
 }
 
 void fill_A(int nx, int ny, double hx, double hy, int* I, double* A, int p, int k) {
