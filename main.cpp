@@ -16,16 +16,28 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    double a = std::stod(argv[1]);
-    double b = std::stod(argv[2]);
-    double c = std::stod(argv[3]);
-    double d = std::stod(argv[4]);
-    int nx = std::stoi(argv[5]);
-    int ny = std::stoi(argv[6]);
-    int k = std::stoi(argv[7]);
-    double eps = std::stod(argv[8]);
-    int max_its = std::stoi(argv[9]);
-    int p = std::stoi(argv[10]);
+    double a, b, c, d, eps;
+    int nx, ny, k, max_its, p;
+    
+    try {
+        a = std::stod(argv[1]);
+        b = std::stod(argv[2]);
+        c = std::stod(argv[3]);
+        d = std::stod(argv[4]);
+        nx = std::stoi(argv[5]);
+        ny = std::stoi(argv[6]);
+        k = std::stoi(argv[7]);
+        eps = std::stod(argv[8]);
+        max_its = std::stoi(argv[9]);
+        p = std::stoi(argv[10]);
+    } catch (const std::invalid_argument& e) {
+        std::cerr << "Error: Invalid argument format. All parameters must be valid numbers." << std::endl;
+        std::cerr << "Usage: " << argv[0] << " a b c d nx ny k epsilon max_iterations threads" << std::endl;
+        return 1;
+    } catch (const std::out_of_range& e) {
+        std::cerr << "Error: Number out of range." << std::endl;
+        return 1;
+    }
     
     int* I = nullptr;
     double* A = nullptr;
